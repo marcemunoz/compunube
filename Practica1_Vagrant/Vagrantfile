@@ -8,7 +8,7 @@ Vagrant.configure("2") do |config|
     config.vbguest.no_remote = true
   end
 
-  # ----------------- CLIENTE -----------------
+  # ----------------- CLIENTE UBUNTU -----------------
   config.vm.define "clienteUbu" do |clienteUbu|
     clienteUbu.vm.box = "bento/ubuntu-18.04"
     clienteUbu.vm.network "private_network", ip: "192.168.100.11"
@@ -21,42 +21,59 @@ Vagrant.configure("2") do |config|
     clienteUbu.vm.provision "shell", inline: <<-SHELL
       sudo apt update -y
       sudo apt install -y snapd
-      sudo snap install lxd
-
+      sudo snap install lxd || true
       sudo usermod -aG lxd vagrant
       newgrp lxd
-
-      lxd init --auto
+      lxd init --auto || true
       sleep 5
 
-      # Crear contenedores web2, web3, web4
-      lxc launch ubuntu:18.04 web2
-      sleep 10
-      lxc exec web2 -- apt update -y
-      lxc exec web2 -- apt install -y apache2
-      lxc exec web2 -- mkdir -p /var/www/html
-      lxc exec web2 -- tee /var/www/html/index.html <<< "<h1>Hello from web2</h1>"
-      lxc config device add web2 http proxy listen=tcp:0.0.0.0:80 connect=tcp:127.0.0.1:80
-
-      lxc launch ubuntu:18.04 web3
-      sleep 10
-      lxc exec web3 -- apt update -y
-      lxc exec web3 -- apt install -y apache2
-      lxc exec web3 -- mkdir -p /var/www/html
-      lxc exec web3 -- tee /var/www/html/index.html <<< "<h1>Hello from web3 (backup)</h1>"
-      lxc config device add web3 http proxy listen=tcp:0.0.0.0:81 connect=tcp:127.0.0.1:80
-
-      lxc launch ubuntu:18.04 web4
-      sleep 10
-      lxc exec web4 -- apt update -y
-      lxc exec web4 -- apt install -y apache2
-      lxc exec web4 -- mkdir -p /var/www/html
-      lxc exec web4 -- tee /var/www/html/index.html <<< "<h1>Hello from web4 (backup)</h1>"
-      lxc config device add web4 http proxy listen=tcp:0.0.0.0:82 connect=tcp:127.0.0.1:80
+      # Contenedores web2, web3
+      for c in web2 web3; do
+        if ! lxc list $c --format csv | grep -q $c; then
+          lxc launch ubuntu:18.04 $c
+          sleep 10
+          lxc exec $c -- apt update -y
+          lxc exec $c -- apt install -y apache2
+          lxc exec $c -- bash -c "echo '<h1>Hello from $c</h1>' > /var/www/html/index.html"
+          PORT=8080
+          [[ "$c" == "web3" ]] && PORT=8081
+          lxc config device add $c http proxy listen=tcp:0.0.0.0:$PORT connect=tcp:127.0.0.1:80 || true
+        fi
+      done
     SHELL
   end
 
-  # ----------------- SERVIDOR -----------------
+  # ----------------- MONITOR UBUNTU -----------------
+  config.vm.define "monitorUbu" do |monitorUbu|
+    monitorUbu.vm.box = "bento/ubuntu-18.04"
+    monitorUbu.vm.network "private_network", ip: "192.168.100.13"
+    monitorUbu.vm.hostname = "monitorUbu"
+    monitorUbu.vm.provider "virtualbox" do |vb|
+      vb.memory = "1024"
+      vb.cpus = 1
+    end
+
+    monitorUbu.vm.provision "shell", inline: <<-SHELL
+      sudo apt update -y
+      sudo apt install -y snapd
+      sudo snap install lxd || true
+      sudo usermod -aG lxd vagrant
+      newgrp lxd
+      lxd init --auto || true
+      sleep 5
+
+      # Contenedor web4
+      if ! lxc list web4 --format csv | grep -q web4; then
+        lxc launch ubuntu:18.04 web4
+        sleep 10
+        lxc exec web4 -- apt update -y
+        lxc exec web4 -- apt install -y apache2
+        lxc exec web4 -- bash -c "echo '<h1>Hello from web4</h1>' > /var/www/html/index.html"
+        lxc config device add web4 http proxy listen=tcp:0.0.0.0:8082 connect=tcp:127.0.0.1:80 || true
+      fi
+    SHELL
+  end
+ # ----------------- SERVIDOR -----------------
   config.vm.define "servidorUbu" do |servidorUbu|
     servidorUbu.vm.box = "bento/ubuntu-18.04"
     servidorUbu.vm.network "private_network", ip: "192.168.100.12"
@@ -127,7 +144,7 @@ backend web-backend
     server web1 192.168.100.12:80 check
     server web2 192.168.100.11:8080 check
     server web3 192.168.100.11:8081 check backup
-    server web4 192.168.100.11:8082 check backup
+    server web4 192.168.100.13:8082 check backup
 
      # Página personalizada si no hay servidores disponibles
     errorfile 503 /etc/haproxy/errors/503.http
@@ -138,3 +155,5 @@ EOF"
     SHELL
   end
 end
+
+  
